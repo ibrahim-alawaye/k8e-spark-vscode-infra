@@ -5,7 +5,7 @@ set -e
 echo "=== Starting installation of MicroK8s, Docker, and Kubernetes tools ==="
 
 # Make all scripts executable
-chmod +x ./scripts/*.sh
+chmod +x ./*.sh
 
 # Run installation scripts in sequence
 ./install-docker.sh
