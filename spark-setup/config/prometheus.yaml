@@ -1,0 +1,32 @@
+---
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+rules:
+  # These come from the application
+  - pattern: "metrics<name=app-metrics.(.*)><>Value"
+    name: spark_application_$1
+  
+  # These come from the JVM
+  - pattern: "java.lang<type=OperatingSystem><>(.+):"
+    name: jvm_os_$1
+    type: GAUGE
+  
+  - pattern: "java.lang<type=Memory><HeapMemoryUsage>(.+):"
+    name: jvm_memory_heap_$1
+    type: GAUGE
+  
+  - pattern: "java.lang<type=Memory><NonHeapMemoryUsage>(.+):"
+    name: jvm_memory_nonheap_$1
+    type: GAUGE
+  
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionCount"
+    name: jvm_gc_collection_count
+    type: COUNTER
+    labels:
+      collector: "$1"
+  
+  - pattern: "java.lang<type=GarbageCollector, name=(.+)><>CollectionTime"
+    name: jvm_gc_collection_time_seconds
+    type: COUNTER
+    labels:
+      collector: "$1"

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  vscode-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-vscode-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount Docker socket to allow Docker commands from inside the container
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount Kubernetes config
+      - ~/.kube:/kube:ro
+      # Mount user workspace for persistence
+      - ./workspace:/home/coder/workspace
+    environment:
+      - SPARK_MASTER_URL=spark://spark-cluster-master-svc:7077
+    networks:
+      - k8s-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+networks:
+  k8s-network:
+    external: true
+    name: k8s-network

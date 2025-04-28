@@ -1,0 +1,177 @@
+## Spark cluster configuration
+##
+image:
+  registry: docker.io
+  repository: bitnami/spark
+  tag: 3.5.5
+
+## Specify a imagePullPolicy
+## ref: https://kubernetes.io/docs/concepts/containers/images/#updating-images
+##
+imagePullPolicy: IfNotPresent
+
+## Spark master specific configuration
+##
+master:
+  # Configure resource limits and requests
+  resourcesPreset: medium
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+  
+  # Use our custom configuration
+  configurationConfigMap: spark-config
+  
+  # Set JVM and Spark options
+  configOptions:
+    -Dspark.ui.reverseProxy=true
+    -Dspark.master.rest.enabled=true
+    -Dspark.master.ui.port=8080
+    -Dspark.deploy.recoveryMode=FILESYSTEM
+    -Dspark.deploy.recoveryDirectory=/tmp/spark-recovery
+    -Dspark.eventLog.enabled=true
+    -Dspark.eventLog.dir=/tmp/spark-events
+    -Dspark.history.fs.logDirectory=/tmp/spark-events
+  
+  # Set up pod anti-affinity to avoid masters on the same node
+  podAntiAffinityPreset: hard
+
+## Spark worker specific configuration
+##
+worker:
+  # Number of worker replicas
+  replicaCount: 3
+  
+  # Configure resource limits and requests
+  resourcesPreset: large
+  resources:
+    limits:
+      cpu: 4
+      memory: 8Gi
+    requests:
+      cpu: 2
+      memory: 4Gi
+  
+  # Use our custom configuration
+  configurationConfigMap: spark-config
+  
+  # Set memory and core limits for workers
+  memoryLimit: "6g"
+  coreLimit: "3"
+  
+  # Set JVM and Spark options
+  configOptions:
+    -Dspark.worker.ui.port=8081
+    -Dspark.worker.cleanup.enabled=true
+    -Dspark.worker.cleanup.interval=1800
+    -Dspark.worker.cleanup.appDataTtl=604800
+  
+  # Enable autoscaling based on CPU usage
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPU: 70
+    targetMemory: 80
+
+## Prometheus metrics
+##
+metrics:
+  enabled: true
+  # Prometheus Operator ServiceMonitor
+  serviceMonitor:
+    enabled: true
+    namespace: monitoring
+    interval: 30s
+    scrapeTimeout: 10s
+    selector:
+      prometheus: kube-prometheus
+  # Prometheus rules for alerting
+  prometheusRule:
+    enabled: true
+    namespace: monitoring
+    rules:
+      - alert: SparkWorkerDown
+        expr: absent(up{job="spark-cluster-worker"}) == 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Spark worker is down"
+          description: "Spark worker has been down for more than 5 minutes."
+      - alert: SparkMasterDown
+        expr: absent(up{job="spark-cluster-master"}) == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Spark master is down"
+          description: "Spark master has been down for more than 1 minute."
+
+## Service configuration
+##
+service:
+  type: ClusterIP
+  # If using LoadBalancer, uncomment and set the IP
+  # type: LoadBalancer
+  # loadBalancerIP: ""
+  
+  # Port configurations
+  ports:
+    http: 80
+    https: 443
+    cluster: 7077
+
+## Ingress configuration
+##
+ingress:
+  enabled: true
+  hostname: spark.cluster.local
+  path: /
+  pathType: Prefix
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # If using cert-manager, uncomment these
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls: false
+  # If using TLS, uncomment these
+  # tls: true
+  # selfSigned: false
+  # secrets:
+  #  - name: spark-tls-secret
+
+## Security configuration
+##
+security:
+  # If you want to enable authentication, uncomment and configure these
+  # passwordsSecretName: spark-passwords
+  # rpc:
+  #   authenticationEnabled: true
+  #   encryptionEnabled: true
+  # ssl:
+  #   enabled: true
+  #   needClientAuth: false
+  #   protocol: TLSv1.2
+
+## Storage for Spark History Server
+##
+worker:
+  extraVolumes:
+    - name: spark-data
+      persistentVolumeClaim:
+        claimName: spark-data-pvc
+  extraVolumeMounts:
+    - name: spark-data
+      mountPath: /tmp/spark-events
+
+## PVC for Spark data
+##
+persistence:
+  enabled: true
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 20Gi
