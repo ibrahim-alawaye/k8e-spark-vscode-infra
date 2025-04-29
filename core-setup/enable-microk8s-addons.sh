@@ -4,10 +4,56 @@ set -e
 
 echo "=== Enabling MicroK8s addons ==="
 
-# Check if MicroK8s is running
-if ! microk8s status | grep "microk8s is running" > /dev/null; then
-    echo "Error: MicroK8s is not running. Please start MicroK8s first."
-    exit 1
+# Verify MicroK8s is running properly
+echo "Verifying MicroK8s API server..."
+if ! microk8s kubectl get nodes &> /dev/null; then
+    echo "Error: MicroK8s API server is not responding. Attempting to fix..."
+    sudo microk8s stop
+    sudo microk8s reset
+    sudo microk8s start
+    sleep 10
+    if ! microk8s kubectl get nodes &> /dev/null; then
+        echo "Error: MicroK8s API server is still not responding after reset."
+        echo "Please check the logs with: sudo journalctl -u snap.microk8s.daemon-kubelite -n 100"
+        exit 1
+    fi
+fi
+
+# Configure IPtables for Kubernetes
+echo "Configuring IPtables FORWARD policy..."
+sudo iptables -P FORWARD ACCEPT
+
+# Make IPtables configuration persistent
+if ! command -v iptables-persistent &> /dev/null; then
+    echo "Installing iptables-persistent..."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y iptables-persistent
+else
+    echo "Saving current iptables rules..."
+    sudo netfilter-persistent save
+fi
+
+# Configure Docker to use MicroK8s registry
+echo "Configuring Docker to use MicroK8s registry..."
+sudo mkdir -p /etc/docker
+if [ ! -f /etc/docker/daemon.json ]; then
+    sudo bash -c 'cat > /etc/docker/daemon.json << EOF
+{
+    "insecure-registries" : ["localhost:32000"]
+}
+EOF'
+    sudo systemctl restart docker
+elif ! grep -q "insecure-registries" /etc/docker/daemon.json; then
+    # Backup existing file
+    sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak
+    # Add insecure-registries if not present
+    if command -v jq &> /dev/null; then
+        sudo bash -c 'jq ". += {\"insecure-registries\": [\"localhost:32000\"]}" /etc/docker/daemon.json > /tmp/daemon.json && mv /tmp/daemon.json /etc/docker/daemon.json'
+    else
+        echo "jq not found, installing..."
+        sudo apt-get update && sudo apt-get install -y jq
+        sudo bash -c 'jq ". += {\"insecure-registries\": [\"localhost:32000\"]}" /etc/docker/daemon.json > /tmp/daemon.json && mv /tmp/daemon.json /etc/docker/daemon.json'
+    fi
+    sudo systemctl restart docker
 fi
 
 # Function to enable an addon with retry logic
@@ -48,8 +94,8 @@ enable_addon() {
     return 0
 }
 
-# Enable core addons
-ADDONS=("dns" "dashboard" "metrics-server" "storage" "registry")
+# Enable core addons - added calico for CNI
+ADDONS=("dns" "dashboard" "metrics-server" "storage" "registry" "calico")
 
 for addon in "${ADDONS[@]}"; do
     enable_addon $addon
@@ -68,12 +114,7 @@ if ! microk8s kubectl get namespace minio &> /dev/null; then
         helm repo update
     fi
     
-    # Install MinIO with specific configuration
-    # helm install minio bitnami/minio \
-    #     --namespace minio \
-    #     --set resources.requests.memory=512Mi \
-    #     --set persistence.size=2Ti \
-    #     --set mode=standalone
+    # Install MinIO with specific configuration for resource-constrained environments
     helm install minio bitnami/minio \
         --namespace minio \
         --set resources.requests.memory=256Mi \
@@ -115,5 +156,15 @@ for deployment in "${DEPLOYMENTS[@]}"; do
         fi
     fi
 done
+
+# Verify that the CNI is working properly
+echo "Verifying CNI functionality..."
+if ! microk8s kubectl get nodes -o wide | grep -q "Ready"; then
+    echo "Warning: Nodes are not in Ready state. CNI might not be functioning properly."
+    echo "Checking CNI pods..."
+    microk8s kubectl get pods -n kube-system | grep -E 'calico|flannel'
+else
+    echo "CNI appears to be functioning properly."
+fi
 
 echo "MicroK8s addons setup completed."
