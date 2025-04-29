@@ -94,12 +94,69 @@ enable_addon() {
     return 0
 }
 
-# Enable core addons - added calico for CNI
-ADDONS=("dns" "dashboard" "metrics-server" "storage" "registry" "calico")
+# Enable core addons
+ADDONS=("dns" "dashboard" "metrics-server" "storage" "registry" "rbac")
 
 for addon in "${ADDONS[@]}"; do
     enable_addon $addon
 done
+
+# Create dashboard admin user and get token
+echo "Creating dashboard admin user and generating token..."
+cat <<EOF | microk8s kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-user
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-user
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: admin-user
+  namespace: kube-system
+EOF
+
+# Wait for the service account to be created
+sleep 5
+
+# Get the token and save it to a file
+echo "Retrieving dashboard token..."
+TOKEN_FILE="./dashboard-token.txt"
+
+# For Kubernetes 1.24+
+if microk8s kubectl -n kube-system get serviceaccount admin-user &> /dev/null; then
+    # Create a token for the admin-user service account
+    cat <<EOF | microk8s kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: admin-user-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: admin-user
+type: kubernetes.io/service-account-token
+EOF
+    
+    # Wait for the token to be created
+    sleep 5
+    
+    # Get the token
+    TOKEN=$(microk8s kubectl -n kube-system get secret admin-user-token -o jsonpath='{.data.token}' | base64 --decode)
+    echo "$TOKEN" > "$TOKEN_FILE"
+    echo "Dashboard token saved to $TOKEN_FILE"
+    echo "Use this token to log in to the Kubernetes Dashboard at:"
+    echo "https://localhost:10443/api/v1/namespaces/kube-system/services/https:kubernetes-dashboard:/proxy/"
+else
+    echo "Error: admin-user service account not found. Token creation failed."
+fi
 
 # Enable MinIO with specific configuration if not already installed
 if ! microk8s kubectl get namespace minio &> /dev/null; then
@@ -162,7 +219,7 @@ echo "Verifying CNI functionality..."
 if ! microk8s kubectl get nodes -o wide | grep -q "Ready"; then
     echo "Warning: Nodes are not in Ready state. CNI might not be functioning properly."
     echo "Checking CNI pods..."
-    microk8s kubectl get pods -n kube-system | grep -E 'calico|flannel'
+    microk8s kubectl get pods -n kube-system | grep -E 'calico|flannel|cni'
 else
     echo "CNI appears to be functioning properly."
 fi
