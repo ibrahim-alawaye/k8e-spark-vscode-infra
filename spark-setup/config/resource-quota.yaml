@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: spark-quota
+  namespace: spark-cluster
+spec:
+  hard:
+    requests.cpu: "8"
+    requests.memory: 16Gi
+    limits.cpu: "12"
+    limits.memory: 24Gi
+    pods: "20"
